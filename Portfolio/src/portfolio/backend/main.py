@@ -1,4 +1,6 @@
 from fastapi import FastAPI
+from fastapi.responses import HTMLResponse, FileResponse
+from fastapi.middleware.cors import CORSMiddleware
 from portfolio.backend.read_resume_from_pdf import read_pdf_text
 import sys
 import os
@@ -9,7 +11,15 @@ from pydantic import BaseModel
 from glob import glob
 import json
 
-app = FastAPI()
+app = FastAPI(title="Prajwal Gawande | AI Candidate Assistant API")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 load_dotenv()
 my_api_key = os.getenv("GROQ_API_KEY")
@@ -18,6 +28,8 @@ client = Groq(api_key=my_api_key) if my_api_key else None
 model = "openai/gpt-oss-120b"
 BASE_DIR = Path(__file__).resolve().parent
 DEFAULT_RESUME_PATH = BASE_DIR / "Prajwal_Gawande_Resume_0726.pdf"
+
+_cached_resume = None
 
 class Experience(BaseModel):
     company : str | None
@@ -37,20 +49,19 @@ class ChatRequest(BaseModel):
 
 def ask_candidate(question:str, resume: Resume):
     system_prompt = f"""
-        You are and AI Assistant representing a job candidate.
-        Use the following resume to answer questions
+        You are an AI Assistant representing job candidate Prajwal Gawande.
+        Use the following resume details to answer interviewer questions accurately, professionally, and naturally.
 
         {resume.model_dump_json(indent=2)}
          
         Rules:
-        1) Never Hallucinate
-        2) If cannot answer say i dont know
-        3) Be concise and direct
-        4) Answer in 3-4 sentences max
-        5) Answer only with given resume
-        6) Answer as fif hr is interviewing Candidate.
+        1) Never hallucinate facts outside the provided resume.
+        2) If information cannot be answered from the resume, state politely: "That information isn't covered in my current resume, but I'd be happy to share more details directly!"
+        3) Be concise, confident, and direct.
+        4) Limit answers to 3-4 clear sentences.
+        5) Respond in first person ("I have worked on...", "My background includes...").
     """
-    response=client.chat.completions.create(
+    response = client.chat.completions.create(
         model=model,
         messages=[{
             "role":"system",
@@ -64,18 +75,17 @@ def ask_candidate(question:str, resume: Resume):
 
     return response.choices[0].message.content
 
-def resume_parser(resume_text: str) -> dict:
+def resume_parser(resume_text: str) -> Resume:
     schema = Resume.model_json_schema()
     response_format = {"type":"json_object"}
     system_prompt=f"""
-    Act as a expert resume parser
-    Return json matching {schema} after extracting necessary information from the job description
-
+    Act as an expert resume parser.
+    Return JSON strictly matching schema: {schema} after extracting information from the resume text.
     Do not invent information.
     """
 
     user_prompt = f'''   
-    Analyse the following resume:
+    Analyse the following resume text:
     {resume_text}
     '''
     message_system = {
@@ -95,24 +105,63 @@ def resume_parser(resume_text: str) -> dict:
     )
     raw_output = response.choices[0].message.content
     data = json.loads(raw_output)
-    resume = Resume(**data)
-    return resume 
+    return Resume(**data)
 
-def pdf_extaction(file_path:str):
-    resume_text = read_pdf_text(file_path)
-    return resume_text
+def get_parsed_resume() -> Resume:
+    global _cached_resume
+    if _cached_resume is None:
+        resume_text = read_pdf_text(DEFAULT_RESUME_PATH)
+        _cached_resume = resume_parser(resume_text)
+    return _cached_resume
 
-@app.get("/")
-def home():
-    return {"message":"Hello"}
+def get_frontend_file(filename: str) -> Path:
+    # Look for file in root, frontend dir, or relative paths
+    root_file = BASE_DIR.parent.parent.parent / filename
+    if root_file.exists():
+        return root_file
+    frontend_file = BASE_DIR.parent / "frontend" / filename
+    if frontend_file.exists():
+        return frontend_file
+    return BASE_DIR / filename
+
+@app.get("/", response_class=HTMLResponse)
+def homepage():
+    index_path = get_frontend_file("index.html")
+    if index_path.exists():
+        return HTMLResponse(content=index_path.read_text(encoding="utf-8"))
+    return HTMLResponse(content="<h1>AI Candidate Assistant</h1><p>Frontend template file not found.</p>")
+
+@app.get("/style.css")
+def get_style():
+    style_path = get_frontend_file("style.css")
+    if style_path.exists():
+        return FileResponse(style_path, media_type="text/css")
+    return HTMLResponse(content="", media_type="text/css")
+
+@app.get("/script.js")
+def get_script():
+    script_path = get_frontend_file("script.js")
+    if script_path.exists():
+        return FileResponse(script_path, media_type="application/javascript")
+    return HTMLResponse(content="", media_type="application/javascript")
+
+@app.get("/api/health")
+def health():
+    return {"status": "online", "message": "Prajwal Gawande AI Candidate Assistant API is running"}
 
 @app.post("/chat")
+@app.post("/api/chat")
 def chat(request: ChatRequest):
     if not client:
         return {"error": "GROQ_API_KEY is not configured in environment variables."}
-    resume_text = read_pdf_text(DEFAULT_RESUME_PATH)   
-    resume = resume_parser(resume_text)
-    answer = ask_candidate(request.question, resume)
-    return {"answer": answer}
+    
+    try:
+        resume = get_parsed_resume()
+        answer = ask_candidate(request.question, resume)
+        return {"answer": answer}
+    except Exception as e:
+        return {"error": f"An error occurred: {str(e)}"}
+
+
 
 

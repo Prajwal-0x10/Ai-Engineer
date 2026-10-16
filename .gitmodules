@@ -1,0 +1,12 @@
+[submodule "RAG"]
+	path = RAG
+	url = https://github.com/Prajwal-0x10/Retrieval-Augmented-Generation-RAG.git
+[submodule "Embedding"]
+	path = Embedding
+	url = https://github.com/Prajwal-0x10/Embedding.git
+[submodule "system_role_and_temperature"]
+	path = system_role_and_temperature
+	url = https://github.com/Prajwal-0x10/system_role_and_temperature.git
+[submodule "Tokens"]
+	path = Tokens
+	url = https://github.com/Prajwal-0x10/Tokens.git
